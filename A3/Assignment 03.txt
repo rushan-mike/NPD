@@ -1,0 +1,13 @@
+Write 2 python scripts to demonstrate the client, server functionalities. 
+
+Server.py :
+
+Should be listening on a defined port.
+
+Client.py:
+
+Should connect to the listening port of the Server.py.
+
+Both programs should transfer the data/messages which enter into its running terminal, back to the remote application simultaneously without a specific order. 
+
+(NETCAT demonstrate the mentioned functionality once it binds into an interface)

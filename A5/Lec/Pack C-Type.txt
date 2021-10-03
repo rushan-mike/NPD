@@ -1,0 +1,8 @@
+Format  C Type                  Python type     Standard size (bytes)
+
+B       unsigned char           integer         1
+H       unsigned short          integer         2
+I       unsigned int            integer         4
+L       unsigned long           integer         4
+Q       unsigned long long      integer         8
+s       char[]                  bytes           1

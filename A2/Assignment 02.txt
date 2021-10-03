@@ -1,0 +1,44 @@
+Write a python program which takes the relative or absolute file paths as input.
+
+If the first input file doesn’t exists it should display the error message as below. 
+
+
+usage : program_name [infile] [outfile]
+
+
+Then the program should display the given file with its metadata/header in hexadecimal and asciii formats as below.
+
+It should display the offset in hexadecimal format.
+
+
+00000000: 8950 4e47 0d0a 1a0a 0000 000d 4948 4452     .PNG........IHDR
+
+00000010: 0000 0616 0000 056e 0806 0000 0099 4806     .......n......H.
+
+00000020: 7300 0000 0173 5247 4200 aece 1ce9 0000     s....sRGB.......
+
+00000030: 0009 7048 5973 0000 1625 0000 1625 0149     ..pHYs...%...%.I
+
+00000040: 5224 f000 0001 6269 5458 7458 4d4c 3a63      R$....biTXtXML:c
+
+00000050: 6f6d 2e61 646f 6265 2e78 6d70 0000 0000       om.adobe.xmp....
+
+00000060: 003c 783a 786d 706d 6574 6120 786d 6c6e     .<x:xmpmeta xmln
+
+00000070: 733a 783d 2261 646f 6265 3a6e 733a 6d65      s:x="adobe:ns:me
+
+00000080: 7461 2f22 2078 3a78 6d70 746b                        ta/" x:xmptk
+
+
+
+
+1st field          : offset in hexadecimal format
+
+2nd field         : 16 characters in hexadecimal format which starts from file header
+
+3rd field          : 16 characters in ASCII format which starts from file header
+
+
+
+
+The program should handle all kinds of errors and exceptions itself.

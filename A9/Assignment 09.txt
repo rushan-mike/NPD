@@ -1,0 +1,1 @@
+Develop firewall application using Python. The program should analyze each and every packet which comes into the firewall (server which runs firewall) and forward, drop according to the pre-defined rules.

@@ -1,0 +1,1 @@
+Write a simple program to calculate the sum of given values. The program should ignore all the invalid inputs and continue until the user enter 0
