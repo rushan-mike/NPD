@@ -9,8 +9,8 @@ print("\nList of Algorithms that May Work : {}".format(hashlib.algorithms_availa
 ################################################################################################################################
 
 
-message = "Welcome to CoderzColumn."
-key= "abracadabra"
+message = "Message to authenticate"
+key= "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
 
 ########## 1 ##################
 hmac1 = hmac.new(key=key.encode(), msg=message.encode(), digestmod="sha1")
