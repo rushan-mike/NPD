@@ -10,8 +10,6 @@ def ESP():
     pdlen = #c_ubyte        #8
     nextt = #c_ubyte        #8
     icv = #c_ulong          #32
-    
-
 
     header = pack('!LL256BBBL', spi, snum, payload, pdlen, nextt, icv)
 
