@@ -34,7 +34,7 @@ class IPv4(Structure):
 
     def __init__(self, socket_buffer=None):
 
-        self.proto_map = {1:"ICMP", 6:"TCP", 17:"UDP"}
+        self.proto_map = {1:"ICMP", 6:"TCP", 17:"UDP", 50:"ESP", 51:"AH"}
 
         self.src_add = socket.inet_ntoa (pack("@I", self.src))
         self.dst_add = socket.inet_ntoa (pack("@I", self.dst))
@@ -56,7 +56,7 @@ class ESP(Structure):
         ("snum", c_ubyte*4),          #32
         ("enc_payload", c_ubyte*258), #258*8
         # ("payload", c_ubyte*256),   #256*8
-        # ("pdlen", c_ubyte),         #8
+        # ("padlen", c_ubyte),        #8
         # ("nextt", c_ubyte),         #8
         ("icv", c_ubyte*4)            #32
     ]
@@ -71,7 +71,7 @@ class ESP(Structure):
 class PAY(Structure):
     _fields_= [
         ("payload", c_ubyte*256),   #256*8
-        ("pdlen", c_ubyte),         #8
+        ("padlen", c_ubyte),        #8
         ("nextt", c_ubyte),         #8
     ]
 
@@ -79,10 +79,12 @@ class PAY(Structure):
         return self.from_buffer_copy (socket_buffer)
 
     def __init__(self, socket_buffer=None):
-        pass
+        
+        self.paylen = len(self.payload) - self.padlen
+        self.data = self.payload[:self.paylen]
 
 
-def IPv4_pack(target_ip):
+def IPv4_pack(target_ip, interface_ip):
     
     ver = 4
     ihl = 5
@@ -92,9 +94,9 @@ def IPv4_pack(target_ip):
     flag = 2
     offset = 0
     ttl = 64
-    proto = 1
+    proto = 50
     check = 0
-    src = socket.inet_aton('10.0.2.15')
+    src = socket.inet_aton(interface_ip)
     dst = socket.inet_aton(target_ip)
 
     ihl_ver = (ver << 4) + ihl
@@ -115,7 +117,7 @@ def ESP_unpack(packet):
 
     if check == True:
         pay = PAY(dec_payload)
-        data = pay.payload
+        data = pay.data
     else:
         data = 0
 
@@ -127,14 +129,14 @@ def ESP_pack(data):
     spi = 0 #c_ulong            #32
     seq_num = 0 #c_ulong        #32
     # payload = #c_ubyte*256    #256*8
-    # pdlen = #c_ubyte          #8
+    # padlen = #c_ubyte         #8
     nextt = 4 #c_ubyte          #8
     # icv = #c_ulong            #32
 
     payload = data + pad
-    pdlen = len(payload) - len(data)
+    padlen = len(payload) - len(data)
 
-    payload_tob_enc = payload + pdlen + nextt
+    payload_tob_enc = payload + padlen + nextt
     enc_payload = encrypt_message(payload_tob_enc)
 
     icv_data = spi + snum + enc_payload
@@ -180,7 +182,7 @@ def ICV(message):
     return message_digest
 
 
-def ICV_check(message,digest):
+def ICV_check(message, digest):
     key= "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
     message_digest = hmac.digest(key.encode(), message.encode(), sha3_256)
     check = hmac.compare_digest(message_digest, digest)
@@ -188,51 +190,68 @@ def ICV_check(message,digest):
 
 
 
-def tun_send(address):
-    while True:
-        try:
+def tun_send(target_ip, interface_ip): 
+    try:
+
+        forward_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+        forward_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        forward_sock.setsockopt(socket.SOL_IP, socket.IP_HDRINCL, 1)
+
+        while True:
+
             send_data = os.read(fd, 1600)
-            packet = ESP_pack(send_data)
 
-            forward_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
-            forward_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            # forward_sock.setsockopt(socket.SOL_IP, socket.IP_HDRINCL, 1)
+            ip_h = IPv4_pack(target_ip, interface_ip)
+            esp_h = ESP_pack(send_data)
 
-            send_target = (address, 0)
+            packet = ip_h + esp_h
+
+            send_target = (target_ip, 0)
             forward_sock.sendto(packet, send_target)
 
-        except Exception as e:
-            print(e)
-            exit(1)
+    except Exception as e:
+        print(e)
+        exit(1)
 
 
 def tun_receive(interface):
-    while True:
-        try:
-            bind_target = (interface,0)
+    try: 
+        bind_target = (interface,0)
 
-            listen_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
-            listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            listen_sock.bind(bind_target)
+        listen_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
+        listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listen_sock.bind(bind_target)
+
+        while True:
 
             receive_data = listen_sock.recvfrom(65565)[0]
-            data, check = ESP_unpack(receive_data)
 
-            if check == True:
-                os.write(fd, data)
+            ip = IPv4(receive_data[14:])
+            hstart = ip.hlen + 14
 
-        except Exception as e:
-            print(e)
-            exit(1)
+            if ip.protocol == 50 or ip.protocol == "ESP":
+
+                esp_data = receive_data[hstart:]
+                data, check = ESP_unpack(esp_data)
+
+                if check == True:
+                    os.write(fd, data)
+
+    except Exception as e:
+        print(e)
+        exit(1)
 
 fd = tun_open('asa0')
 
 try:
+    hostname = socket.gethostname()
+    interface_ip = socket.gethostbyname(hostname)
+
     # target_ip = sys.argv[1]
     target_ip = '192.168.1.1'
     interface = 'enp0s3'
 
-    threading.Thread(target=tun_send, args=(target_ip,), daemon=True).start()
+    threading.Thread(target=tun_send, args=(target_ip, interface_ip), daemon=True).start()
     tun_receive(interface)
 
 except Exception as e:
