@@ -6,6 +6,7 @@ import hmac
 import socket
 import hashlib
 import threading
+import netifaces
 from struct import pack
 from fcntl import ioctl
 from cryptography.fernet import Fernet
@@ -244,12 +245,15 @@ def tun_receive(interface):
 fd = tun_open('asa0')
 
 try:
-    hostname = socket.gethostname()
-    interface_ip = socket.gethostbyname(hostname)
+    inter_all = netifaces.interfaces()
 
     # target_ip = sys.argv[1]
+    # interface = sys.argv[2]
+
     target_ip = '192.168.1.1'
     interface = 'enp0s3'
+
+    interface_ip = netifaces.ifaddresses(interface)[netifaces.AF_INET][0]['addr']
 
     threading.Thread(target=tun_send, args=(target_ip, interface_ip), daemon=True).start()
     tun_receive(interface)
