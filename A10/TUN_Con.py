@@ -113,7 +113,7 @@ def ESP_unpack(packet):
     esp = ESP(packet)
 
     dec_payload = decrypt_message(esp.enc_payload)
-    icv_data = esp.spi + esp.snum + enc_payload
+    icv_data = esp.spi + esp.snum + esp.enc_payload
     check = ICV_check(icv_data, esp.icv)
 
     if check == True:
@@ -125,25 +125,26 @@ def ESP_unpack(packet):
     return data, check
 
 
-def ESP_pack(data):
+def ESP_pack(data, data_length, seq_num):
     
     spi = 0 #c_ulong            #32
-    seq_num = 0 #c_ulong        #32
+    # seq_num = 0 #c_ulong      #32
     # payload = #c_ubyte*256    #256*8
     # padlen = #c_ubyte         #8
     nextt = 4 #c_ubyte          #8
     # icv = #c_ulong            #32
 
-    payload = data + pad
+    payload = data # + pad
     padlen = len(payload) - len(data)
+    # data += "\0" * (data_length - len(data))
 
     payload_tob_enc = payload + padlen + nextt
     enc_payload = encrypt_message(payload_tob_enc)
 
-    icv_data = spi + snum + enc_payload
+    icv_data = spi + seq_num + enc_payload
     icv = ICV(icv_data)
 
-    header = pack('!LL258BL', spi, snum, enc_payload, icv)
+    header = pack('!LL258BL', spi, seq_num, enc_payload, icv)
 
     return header
 
@@ -158,7 +159,7 @@ IFF_NO_PI = 0x1000
 
 def tun_open(devname):
     fd = os.open("/dev/net/tun", os.O_RDWR)
-    ifr = struct.pack('16sH',devname.encode(), IFF_TUN | IFF_NO_PI)
+    ifr = pack('16sH',devname.encode(), IFF_TUN | IFF_NO_PI)
     ifs = ioctl(fd, TUNSETIFF , ifr)
     return fd
 
@@ -179,13 +180,13 @@ def decrypt_message(encrypted_message):
 
 def ICV(message):
     key= "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
-    message_digest = hmac.digest(key.encode(), message.encode(), sha3_256)
+    message_digest = hmac.digest(key.encode(), message.encode(), hashlib.sha3_256)
     return message_digest
 
 
 def ICV_check(message, digest):
     key= "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
-    message_digest = hmac.digest(key.encode(), message.encode(), sha3_256)
+    message_digest = hmac.digest(key.encode(), message.encode(), hashlib.sha3_256)
     check = hmac.compare_digest(message_digest, digest)
     return check
 
@@ -198,12 +199,16 @@ def tun_send(target_ip, interface_ip):
         forward_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         forward_sock.setsockopt(socket.SOL_IP, socket.IP_HDRINCL, 1)
 
+        seq_num = 0
+        data_length = 1600
+
         while True:
 
-            send_data = os.read(fd, 1600)
+            send_data = os.read(fd, data_length)
+            seq_num = seq_num + 1
 
             ip_h = IPv4_pack(target_ip, interface_ip)
-            esp_h = ESP_pack(send_data)
+            esp_h = ESP_pack(send_data, data_length, seq_num)
 
             packet = ip_h + esp_h
 
