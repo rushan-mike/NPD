@@ -12,6 +12,12 @@ from fcntl import ioctl
 from cryptography.fernet import Fernet
 from ctypes import Structure, c_ubyte, c_ushort, c_ulong, c_ulonglong, c_uint32
 
+# ETH_P_ALL = 0x0003
+# ETH_P_IP  = 0x0800
+TUNSETIFF = 0x400454ca
+IFF_TUN   = 0x0001
+IFF_NO_PI = 0x1000
+# TUNMODE   = IFF_TUN
 
 class IPv4(Structure):
     _fields_= [
@@ -69,22 +75,6 @@ class ESP(Structure):
         pass
 
 
-class PAY(Structure):
-    _fields_= [
-        ("payload", c_ubyte*256),   #256*8
-        ("padlen", c_ubyte),        #8
-        ("nextt", c_ubyte),         #8
-    ]
-
-    def __new__(self, socket_buffer=None):
-        return self.from_buffer_copy (socket_buffer)
-
-    def __init__(self, socket_buffer=None):
-        
-        self.paylen = len(self.payload) - self.padlen
-        self.data = self.payload[:self.paylen]
-
-
 def IPv4_pack(target_ip, interface_ip):
     
     ver = 4
@@ -108,40 +98,25 @@ def IPv4_pack(target_ip, interface_ip):
     return header
 
 
-def ESP_unpack(packet):
+def ESP_pack(payload, seq_num):
     
-    esp = ESP(packet)
-
-    dec_payload = decrypt_message(esp.enc_payload)
-    icv_data = esp.spi + esp.snum + esp.enc_payload
-    check = ICV_check(icv_data, esp.icv)
-
-    if check == True:
-        pay = PAY(dec_payload)
-        data = pay.data
-    else:
-        data = 0
-
-    return data, check
-
-
-def ESP_pack(data, data_length, seq_num):
-    
-    spi = 0 #c_ulong            #32
+    spi = 256 #c_ulong          #32
     # seq_num = 0 #c_ulong      #32
     # payload = #c_ubyte*256    #256*8
     # padlen = #c_ubyte         #8
     nextt = 4 #c_ubyte          #8
     # icv = #c_ulong            #32
 
-    payload = data # + pad
-    padlen = len(payload) - len(data)
-    # data += "\0" * (data_length - len(data))
+    paylen = len(payload)
+    padlen = 256 - paylen
+    
+    if paylen < 256 :
+        payload += b'\0' * padlen
 
-    payload_tob_enc = payload + padlen + nextt
+    payload_tob_enc = payload + str(padlen).encode() + str(nextt).encode()
     enc_payload = encrypt_message(payload_tob_enc)
 
-    icv_data = spi + seq_num + enc_payload
+    icv_data = str(spi).encode() + str(seq_num).encode() + enc_payload
     icv = ICV(icv_data)
 
     header = pack('!LL258BL', spi, seq_num, enc_payload, icv)
@@ -149,50 +124,28 @@ def ESP_pack(data, data_length, seq_num):
     return header
 
 
-# ETH_P_ALL = 0x0003
-# ETH_P_IP  = 0x0800
-TUNSETIFF = 0x400454ca
-IFF_TUN   = 0x0001
-IFF_NO_PI = 0x1000
-# TUNMODE   = IFF_TUN
+def ESP_unpack(packet):
+    
+    esp = ESP(packet)
+    dec_payload = decrypt_message(esp.enc_payload)
+    
+    icv_data = str(esp.spi).encode() + str(esp.snum).encode() + dec_payload
+    check = ICV_check(icv_data, esp.icv)
+
+    if check == True:
+        payload = dec_payload[256:]
+        padlen_next = dec_payload[:256]
+        padlen = padlen_next[8:]
+        nextt = padlen_next[:8]
+        paylen = 256 - padlen
+        data = payload[paylen:]
+    else:
+        data = 0
+
+    return data, check
 
 
-def tun_open(devname):
-    fd = os.open("/dev/net/tun", os.O_RDWR)
-    ifr = pack('16sH',devname.encode(), IFF_TUN | IFF_NO_PI)
-    ifs = ioctl(fd, TUNSETIFF , ifr)
-    return fd
-
-
-def encrypt_message(message):
-    key = "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
-    f = Fernet(key)
-    encrypted_message = f.encrypt(message)
-    return encrypted_message
-
-
-def decrypt_message(encrypted_message):
-    key = "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
-    f = Fernet(key)
-    decrypted_message = f.decrypt(encrypted_message)
-    return decrypted_message
-
-
-def ICV(message):
-    key= "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
-    message_digest = hmac.digest(key.encode(), message.encode(), hashlib.sha3_256)
-    return message_digest
-
-
-def ICV_check(message, digest):
-    key= "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
-    message_digest = hmac.digest(key.encode(), message.encode(), hashlib.sha3_256)
-    check = hmac.compare_digest(message_digest, digest)
-    return check
-
-
-
-def tun_send(target_ip, interface_ip): 
+def tun_send(target_ip, interface_ip):
     try:
 
         forward_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
@@ -206,14 +159,16 @@ def tun_send(target_ip, interface_ip):
 
             send_data = os.read(fd, data_length)
             seq_num = seq_num + 1
+            
+            if len(send_data) <= 256 :
 
-            ip_h = IPv4_pack(target_ip, interface_ip)
-            esp_h = ESP_pack(send_data, data_length, seq_num)
+                ip_h = IPv4_pack(target_ip, interface_ip)
+                esp_h = ESP_pack(send_data, seq_num)
 
-            packet = ip_h + esp_h
+                packet = ip_h + esp_h
 
-            send_target = (target_ip, 0)
-            forward_sock.sendto(packet, send_target)
+                send_target = (target_ip, 0)
+                forward_sock.sendto(packet, send_target)
 
     except Exception as e:
         print(e)
@@ -247,15 +202,49 @@ def tun_receive(interface):
         print(e)
         exit(1)
 
+
+def tun_open(devname):
+    fd = os.open("/dev/net/tun", os.O_RDWR)
+    ifr = pack('16sH',devname.encode(), IFF_TUN | IFF_NO_PI)
+    ifs = ioctl(fd, TUNSETIFF , ifr)
+    return fd
+
+
+def encrypt_message(message):
+    key = "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
+    f = Fernet(key)
+    encrypted_message = f.encrypt(message)
+    return encrypted_message
+
+
+def decrypt_message(encrypted_message):
+    key = "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
+    f = Fernet(key)
+    decrypted_message = f.decrypt(encrypted_message)
+    return decrypted_message
+
+
+def ICV(message):
+    key= "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
+    message_digest = hmac.digest(key.encode(), message, hashlib.sha3_256)
+    return message_digest
+
+
+def ICV_check(message, digest):
+    key= "v30nE9iDBSlWlIzViAiqmgvIypz0v4qjGmiYHbNoXn8="
+    message_digest = hmac.digest(key.encode(), message, hashlib.sha3_256)
+    check = hmac.compare_digest(message_digest, digest)
+    return check
+
 fd = tun_open('asa0')
 
 try:
     inter_all = netifaces.interfaces()
 
-    # target_ip = sys.argv[1]
+    target_ip = sys.argv[1]
     # interface = sys.argv[2]
 
-    target_ip = '192.168.1.1'
+    # target_ip = '192.168.1.1'
     interface = 'enp0s3'
 
     interface_ip = netifaces.ifaddresses(interface)[netifaces.AF_INET][0]['addr']
