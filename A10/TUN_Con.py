@@ -98,7 +98,7 @@ def IPv4_pack(target_ip, interface_ip):
     return header
 
 
-def ESP_pack(payload, seq_num):
+def ESP_pack(data, seq_num):
     
     spi = 256 #c_ulong          #32
     # seq_num = 0 #c_ulong      #32
@@ -107,16 +107,16 @@ def ESP_pack(payload, seq_num):
     nextt = 4 #c_ubyte          #8
     # icv = #c_ulong            #32
 
-    paylen = len(payload)
-    padlen = 256 - paylen
+    datalen = len(data)
+    padlen = 256 - datalen
     
     if paylen < 256 :
-        payload += b'\0' * padlen
+        payload = data + "\0".encode() * padlen
 
     payload_tob_enc = payload + str(padlen).encode() + str(nextt).encode()
     enc_payload = encrypt_message(payload_tob_enc)
 
-    icv_data = str(spi).encode() + str(seq_num).encode() + enc_payload
+    icv_data = str(spi).encode() + str(seq_num).encode() + payload_tob_enc
     icv = ICV(icv_data)
 
     header = pack('!LL258BL', spi, seq_num, enc_payload, icv)
@@ -133,12 +133,12 @@ def ESP_unpack(packet):
     check = ICV_check(icv_data, esp.icv)
 
     if check == True:
-        payload = dec_payload[256:]
-        padlen_next = dec_payload[:256]
-        padlen = padlen_next[8:]
-        nextt = padlen_next[:8]
+        payload = dec_payload[:256]
+        padlen_next = dec_payload[256:]
+        padlen = padlen_next[:8]
+        nextt = padlen_next[8:]
         paylen = 256 - padlen
-        data = payload[paylen:]
+        data = payload[:paylen]
     else:
         data = 0
 
