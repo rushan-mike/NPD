@@ -133,11 +133,14 @@ def ESP_unpack(packet):
     check = ICV_check(icv_data, esp.icv)
 
     if check == True:
+        
         payload = dec_payload[:256]
         padlen_next = dec_payload[256:]
+        
         padlen = padlen_next[:8]
         nextt = padlen_next[8:]
-        paylen = 256 - padlen
+        
+        paylen = 256 - int(padlen.decode())
         data = payload[:paylen]
     else:
         data = 0
