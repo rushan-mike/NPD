@@ -110,14 +110,25 @@ def ESP_pack(data, seq_num):
     datalen = len(data)
     padlen = 256 - datalen
     
-    if paylen < 256 :
+    if datalen < 256 :
         payload = data + "\0".encode() * padlen
+        
+    print(payload, end="\n\n")
+    print(len(payload), end="\n\n")
 
     payload_tob_enc = payload + str(padlen).encode() + str(nextt).encode()
+    print(payload_tob_enc, end="\n\n")
+    print(len(payload_tob_enc), end="\n\n")
     enc_payload = encrypt_message(payload_tob_enc)
+    print(enc_payload, end="\n\n")
+    print(len(enc_payload), end="\n\n")
 
     icv_data = str(spi).encode() + str(seq_num).encode() + payload_tob_enc
+    print(icv_data, end="\n\n")
+    print(len(icv_data), end="\n\n")
     icv = ICV(icv_data)
+    print(icv, end="\n\n")
+    print(len(icv), end="\n\n")
 
     header = pack('!LL258BL', spi, seq_num, enc_payload, icv)
 
@@ -149,61 +160,61 @@ def ESP_unpack(packet):
 
 
 def tun_send(target_ip, interface_ip):
-    try:
+    # try:
 
-        forward_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
-        forward_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        forward_sock.setsockopt(socket.SOL_IP, socket.IP_HDRINCL, 1)
+    forward_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+    forward_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    forward_sock.setsockopt(socket.SOL_IP, socket.IP_HDRINCL, 1)
 
-        seq_num = 0
-        data_length = 1600
+    seq_num = 0
+    data_length = 1600
 
-        while True:
+    while True:
 
-            send_data = os.read(fd, data_length)
-            seq_num = seq_num + 1
-            
-            if len(send_data) <= 256 :
+        send_data = os.read(fd, data_length)
+        seq_num = seq_num + 1
+        
+        if 0 < len(send_data) <= 256 :
 
-                ip_h = IPv4_pack(target_ip, interface_ip)
-                esp_h = ESP_pack(send_data, seq_num)
+            ip_h = IPv4_pack(target_ip, interface_ip)
+            esp_h = ESP_pack(send_data, seq_num)
 
-                packet = ip_h + esp_h
+            packet = ip_h + esp_h
 
-                send_target = (target_ip, 0)
-                forward_sock.sendto(packet, send_target)
+            send_target = (target_ip, 0)
+            forward_sock.sendto(packet, send_target)
 
-    except Exception as e:
-        print(e)
-        exit(1)
+    # except Exception as e:
+    #     print(e)
+    #     exit(1)
 
 
 def tun_receive(interface):
-    try: 
-        bind_target = (interface,0)
+    # try: 
+    bind_target = (interface,0)
 
-        listen_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
-        listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listen_sock.bind(bind_target)
+    listen_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
+    listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listen_sock.bind(bind_target)
 
-        while True:
+    while True:
 
-            receive_data = listen_sock.recvfrom(65565)[0]
+        receive_data = listen_sock.recvfrom(65565)[0]
 
-            ip = IPv4(receive_data[14:])
-            hstart = ip.hlen + 14
+        ip = IPv4(receive_data[14:])
+        hstart = ip.hlen + 14
 
-            if ip.protocol == 50 or ip.protocol == "ESP":
+        if ip.protocol == 50 or ip.protocol == "ESP":
 
-                esp_data = receive_data[hstart:]
-                data, check = ESP_unpack(esp_data)
+            esp_data = receive_data[hstart:]
+            data, check = ESP_unpack(esp_data)
 
-                if check == True:
-                    os.write(fd, data)
+            if check == True:
+                os.write(fd, data)
 
-    except Exception as e:
-        print(e)
-        exit(1)
+    # except Exception as e:
+    #     print(e)
+    #     exit(1)
 
 
 def tun_open(devname):
@@ -241,20 +252,20 @@ def ICV_check(message, digest):
 
 fd = tun_open('asa0')
 
-try:
-    inter_all = netifaces.interfaces()
+# try:
+inter_all = netifaces.interfaces()
 
-    target_ip = sys.argv[1]
-    # interface = sys.argv[2]
+target_ip = sys.argv[1]
+# interface = sys.argv[2]
 
-    # target_ip = '192.168.1.1'
-    interface = 'enp0s3'
+# target_ip = '192.168.1.1'
+interface = 'enp0s3'
 
-    interface_ip = netifaces.ifaddresses(interface)[netifaces.AF_INET][0]['addr']
+interface_ip = netifaces.ifaddresses(interface)[netifaces.AF_INET][0]['addr']
 
-    threading.Thread(target=tun_send, args=(target_ip, interface_ip), daemon=True).start()
-    tun_receive(interface)
+threading.Thread(target=tun_send, args=(target_ip, interface_ip), daemon=True).start()
+tun_receive(interface)
 
-except Exception as e:
-    print(e)
-    exit(1)
+# except Exception as e:
+#     print(e)
+#     exit(1)
