@@ -9,6 +9,7 @@ import threading
 import netifaces
 from struct import pack
 from fcntl import ioctl
+from Crypto.Cipher import AES
 from cryptography.fernet import Fernet
 from ctypes import Structure, c_ubyte, c_ushort, c_ulong, c_ulonglong, c_uint32
 
@@ -119,7 +120,7 @@ def ESP_pack(data, seq_num):
     payload_tob_enc = payload + str(padlen).encode() + str(nextt).encode()
     print(payload_tob_enc, end="\n\n")
     print(len(payload_tob_enc), end="\n\n")
-    enc_payload = encrypt_message(payload_tob_enc)
+    enc_payload = encrypt_message_AES(payload_tob_enc)
     print(enc_payload, end="\n\n")
     print(len(enc_payload), end="\n\n")
 
@@ -222,6 +223,22 @@ def tun_open(devname):
     ifr = pack('16sH',devname.encode(), IFF_TUN | IFF_NO_PI)
     ifs = ioctl(fd, TUNSETIFF , ifr)
     return fd
+
+
+def encrypt_message_AES(message):
+    key = b'Sixteen byte key'
+    iv = b'Sixteen byte iv_'
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    encrypted_message = cipher.encrypt(message)
+    return encrypted_message
+
+
+def decrypt_message_AES(encrypted_message):
+    key = b'Sixteen byte key'
+    iv = b'Sixteen byte iv_'
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    decrypted_message = cipher.decrypt(encrypted_message)
+    return decrypted_message
 
 
 def encrypt_message(message):
