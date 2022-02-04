@@ -170,7 +170,7 @@ try:
     # bind_target = (interface,0)
     bind_target = ('enp0s3',0)
 
-    listen_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
+    listen_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
     listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listen_sock.bind(bind_target)
 

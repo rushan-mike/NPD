@@ -9,8 +9,10 @@ import threading
 import netifaces
 from struct import pack
 from fcntl import ioctl
-from Crypto.Cipher import AES
+# from Crypto.Cipher import AES
 from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from ctypes import Structure, c_ubyte, c_ushort, c_ulong, c_ulonglong, c_uint32
 
 # ETH_P_ALL = 0x0003
@@ -60,20 +62,22 @@ class IPv4(Structure):
 
 class ESP(Structure):
     _fields_= [
-        ("spi", c_ubyte*4),           #32
-        ("snum", c_ubyte*4),          #32
-        ("enc_payload", c_ubyte*258), #258*8
-        # ("payload", c_ubyte*256),   #256*8
-        # ("padlen", c_ubyte),        #8
-        # ("nextt", c_ubyte),         #8
-        ("icv", c_ubyte*4)            #32
+        ("spi_f", c_ubyte*4),               #32
+        ("snum_f", c_ubyte*4),              #32
+        ("enc_payload_f", c_ubyte*256),     #256*8
+        ("padlen", c_ubyte),                #8
+        ("nextt", c_ubyte),                 #8
+        ("icv_f", c_ubyte*32)               #32*8
     ]
 
     def __new__(self, socket_buffer=None):
         return self.from_buffer_copy (socket_buffer)
 
     def __init__(self, socket_buffer=None):
-        pass
+        self.spi = int.from_bytes(bytes(self.spi_f),'big')
+        self.snum = int.from_bytes(bytes(self.snum_f),'big')
+        self.enc_payload = bytes(self.enc_payload_f)
+        self.icv = bytes(self.icv_f)
 
 
 def IPv4_pack(target_ip, interface_ip):
@@ -106,32 +110,23 @@ def ESP_pack(data, seq_num):
     # payload = #c_ubyte*256    #256*8
     # padlen = #c_ubyte         #8
     nextt = 4 #c_ubyte          #8
-    # icv = #c_ulong            #32
+    # icv = #c_ubyte*32         #32*8
 
     datalen = len(data)
     padlen = 256 - datalen
     
     if datalen < 256 :
         payload = data + "\0".encode() * padlen
-        
-    print(payload, end="\n\n")
-    print(len(payload), end="\n\n")
 
-    payload_tob_enc = payload + str(padlen).encode() + str(nextt).encode()
-    print(payload_tob_enc, end="\n\n")
-    print(len(payload_tob_enc), end="\n\n")
-    enc_payload = encrypt_message_AES(payload_tob_enc)
-    print(enc_payload, end="\n\n")
-    print(len(enc_payload), end="\n\n")
-
-    icv_data = str(spi).encode() + str(seq_num).encode() + payload_tob_enc
-    print(icv_data, end="\n\n")
-    print(len(icv_data), end="\n\n")
+    enc_payload = encrypt_message_AES(payload)
+    enc_payload_list = list(enc_payload)
+    
+    esp_trailer = padlen.to_bytes(1,sys.byteorder) + nextt.to_bytes(1,sys.byteorder)
+    icv_data = spi.to_bytes(4,sys.byteorder) + seq_num.to_bytes(4,sys.byteorder) + payload + esp_trailer
     icv = ICV(icv_data)
-    print(icv, end="\n\n")
-    print(len(icv), end="\n\n")
+    icv_list = list(icv)
 
-    header = pack('!LL258BL', spi, seq_num, enc_payload, icv)
+    header = pack('!LL258B32B', spi, seq_num, *enc_payload_list, padlen , nextt, *icv)
 
     return header
 
@@ -139,21 +134,15 @@ def ESP_pack(data, seq_num):
 def ESP_unpack(packet):
     
     esp = ESP(packet)
-    dec_payload = decrypt_message(esp.enc_payload)
-    
-    icv_data = str(esp.spi).encode() + str(esp.snum).encode() + dec_payload
+    dec_payload = decrypt_message_AES(esp.enc_payload)
+
+    esp_trailer = esp.padlen.to_bytes(1,sys.byteorder) + esp.nextt.to_bytes(1,sys.byteorder)
+    icv_data = esp.spi.to_bytes(4,sys.byteorder) + esp.snum.to_bytes(4,sys.byteorder) + dec_payload + esp_trailer
     check = ICV_check(icv_data, esp.icv)
 
     if check == True:
-        
-        payload = dec_payload[:256]
-        padlen_next = dec_payload[256:]
-        
-        padlen = padlen_next[:8]
-        nextt = padlen_next[8:]
-        
-        paylen = 256 - int(padlen.decode())
-        data = payload[:paylen]
+        paylen = 256 - esp.padlen
+        data = dec_payload[:paylen]
     else:
         data = 0
 
@@ -161,61 +150,61 @@ def ESP_unpack(packet):
 
 
 def tun_send(target_ip, interface_ip):
-    # try:
+    try:
 
-    forward_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
-    forward_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    forward_sock.setsockopt(socket.SOL_IP, socket.IP_HDRINCL, 1)
+        forward_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+        forward_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        forward_sock.setsockopt(socket.SOL_IP, socket.IP_HDRINCL, 1)
 
-    seq_num = 0
-    data_length = 1600
+        seq_num = 0
+        data_length = 1600
 
-    while True:
+        while True:
 
-        send_data = os.read(fd, data_length)
-        seq_num = seq_num + 1
-        
-        if 0 < len(send_data) <= 256 :
+            send_data = os.read(fd, data_length)
+            seq_num = seq_num + 1
+            
+            if 0 < len(send_data) <= 256 :
 
-            ip_h = IPv4_pack(target_ip, interface_ip)
-            esp_h = ESP_pack(send_data, seq_num)
+                ip_h = IPv4_pack(target_ip, interface_ip)
+                esp_h = ESP_pack(send_data, seq_num)
 
-            packet = ip_h + esp_h
+                packet = ip_h + esp_h
 
-            send_target = (target_ip, 0)
-            forward_sock.sendto(packet, send_target)
+                send_target = (target_ip, 0)
+                forward_sock.sendto(packet, send_target)
 
-    # except Exception as e:
-    #     print(e)
-    #     exit(1)
+    except Exception as e:
+        print(e)
+        exit(1)
 
 
-def tun_receive(interface):
-    # try: 
-    bind_target = (interface,0)
+def tun_receive(interface, interface_ip):
+    try: 
+        bind_target = (interface,0)
 
-    listen_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
-    listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listen_sock.bind(bind_target)
+        listen_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
+        listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listen_sock.bind(bind_target)
 
-    while True:
+        while True:
 
-        receive_data = listen_sock.recvfrom(65565)[0]
+            receive_data = listen_sock.recvfrom(65565)[0]
 
-        ip = IPv4(receive_data[14:])
-        hstart = ip.hlen + 14
+            ip = IPv4(receive_data[14:])
+            hstart = ip.hlen + 14
 
-        if ip.protocol == 50 or ip.protocol == "ESP":
+            if ip.protocol == "50" or ip.protocol == "ESP" and ip.dst_add == interface_ip:
 
-            esp_data = receive_data[hstart:]
-            data, check = ESP_unpack(esp_data)
+                esp_data = receive_data[hstart:]
+                data, check = ESP_unpack(esp_data)
 
-            if check == True:
-                os.write(fd, data)
+                if check == True:
+                    os.write(fd, data)
 
-    # except Exception as e:
-    #     print(e)
-    #     exit(1)
+    except Exception as e:
+        print(e)
+        exit(1)
 
 
 def tun_open(devname):
@@ -228,16 +217,22 @@ def tun_open(devname):
 def encrypt_message_AES(message):
     key = b'Sixteen byte key'
     iv = b'Sixteen byte iv_'
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    encrypted_message = cipher.encrypt(message)
+    # cipher = AES.new(key, AES.MODE_CBC, iv)
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), default_backend())
+    encryptor = cipher.encryptor()
+    # encrypted_message = cipher.encrypt(message)
+    encrypted_message = encryptor.update(message) + encryptor.finalize()
     return encrypted_message
 
 
 def decrypt_message_AES(encrypted_message):
     key = b'Sixteen byte key'
     iv = b'Sixteen byte iv_'
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    decrypted_message = cipher.decrypt(encrypted_message)
+    # cipher = AES.new(key, AES.MODE_CBC, iv)
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), default_backend())
+    decryptor = cipher.decryptor()
+    # decrypted_message = cipher.decrypt(encrypted_message)
+    decrypted_message = decryptor.update(encrypted_message) + decryptor.finalize()
     return decrypted_message
 
 
@@ -269,20 +264,30 @@ def ICV_check(message, digest):
 
 fd = tun_open('asa0')
 
-# try:
-inter_all = netifaces.interfaces()
+try:
+    inter_all = netifaces.interfaces()
 
-target_ip = sys.argv[1]
-# interface = sys.argv[2]
+    target_ip = sys.argv[1]
+    # interface = sys.argv[2]
 
-# target_ip = '192.168.1.1'
-interface = 'enp0s3'
+    # target_ip = '192.168.1.1'
+    interface = 'enp0s3'
 
-interface_ip = netifaces.ifaddresses(interface)[netifaces.AF_INET][0]['addr']
+    interface_ip = netifaces.ifaddresses(interface)[netifaces.AF_INET][0]['addr']
 
-threading.Thread(target=tun_send, args=(target_ip, interface_ip), daemon=True).start()
-tun_receive(interface)
+    threading.Thread(target=tun_send, args=(target_ip, interface_ip), daemon=True).start()
+    tun_receive(interface, interface_ip)
 
-# except Exception as e:
-#     print(e)
-#     exit(1)
+except IndexError:
+    print("Usage :")
+    print("     python3 [program_name] [send_target_ip] [exit_interface_name]")
+    print("Example :")
+    print("     python3    TUN_Con.py     192.168.1.1     enp0s3")
+
+except KeyboardInterrupt:
+    print("Exit")
+    exit(1)
+
+except Exception as e:
+    print(e)
+    exit(1)
